@@ -1,6 +1,6 @@
 {
   "name": "@tspvivek/baasix-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "CLI for Baasix Backend-as-a-Service",
   "module": "dist/index.mjs",

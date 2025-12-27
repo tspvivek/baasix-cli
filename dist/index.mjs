@@ -197,7 +197,8 @@ async function createApiProject(projectPath, projectName) {
       start: "node server.js"
     },
     dependencies: {
-      "@tspvivek/baasix": "latest"
+      "@tspvivek/baasix": "latest",
+      "dotenv": "^16.3.1"
     }
   };
   await fs.writeFile(

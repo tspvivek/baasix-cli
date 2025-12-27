@@ -180,6 +180,7 @@ async function createApiProject(projectPath: string, projectName: string) {
     },
     dependencies: {
       "@tspvivek/baasix": "latest",
+      "dotenv": "^16.3.1",
     },
   };
 

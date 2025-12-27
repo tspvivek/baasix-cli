@@ -11,10 +11,10 @@ import {
   select,
   spinner,
   text,
+  multiselect,
 } from "@clack/prompts";
 import chalk from "chalk";
 import { Command } from "commander";
-import { format as prettierFormat } from "prettier";
 import crypto from "node:crypto";
 import { detectPackageManager, installDependencies, type PackageManager } from "../utils/package-manager.js";
 
@@ -25,6 +25,35 @@ interface InitOptions {
   template?: ProjectTemplate;
   name?: string;
   yes?: boolean;
+}
+
+interface ProjectConfig {
+  projectName: string;
+  template: ProjectTemplate;
+  // Database
+  databaseUrl: string;
+  // Features
+  socketEnabled: boolean;
+  multiTenant: boolean;
+  publicRegistration: boolean;
+  // Storage
+  storageDriver: "LOCAL" | "S3";
+  s3Config?: {
+    endpoint: string;
+    bucket: string;
+    accessKey: string;
+    secretKey: string;
+    region: string;
+  };
+  // Cache
+  cacheAdapter: "memory" | "redis";
+  redisUrl?: string;
+  // Auth
+  authServices: string[];
+  // Mail
+  mailEnabled: boolean;
+  // OpenAPI
+  openApiEnabled: boolean;
 }
 
 function generateSecret(length: number = 64): string {
@@ -88,6 +117,13 @@ async function initAction(opts: InitOptions) {
     template = result as ProjectTemplate;
   }
 
+  // Collect configuration options
+  const config = await collectProjectConfig(projectName, template, opts.yes);
+  if (!config) {
+    cancel("Operation cancelled");
+    process.exit(0);
+  }
+
   const projectPath = path.join(cwd, projectName);
 
   // Check if directory exists
@@ -112,9 +148,9 @@ async function initAction(opts: InitOptions) {
 
     // Generate based on template
     if (template === "api") {
-      await createApiProject(projectPath, projectName);
+      await createApiProject(projectPath, config);
     } else if (template === "nextjs-app" || template === "nextjs") {
-      await createNextJsProject(projectPath, projectName, template === "nextjs-app");
+      await createNextJsProject(projectPath, config, template === "nextjs-app");
     }
 
     s.stop("Project structure created");
@@ -149,7 +185,7 @@ async function initAction(opts: InitOptions) {
     console.log();
     console.log(chalk.bold("Next steps:"));
     console.log(`  ${chalk.cyan(`cd ${projectName}`)}`);
-    console.log(`  ${chalk.cyan("# Configure your .env file")}`);
+    console.log(`  ${chalk.cyan("# Review and update your .env file")}`);
     if (template === "api") {
       console.log(`  ${chalk.cyan(`${packageManager} run dev`)}`);
     } else {
@@ -165,13 +201,175 @@ async function initAction(opts: InitOptions) {
   }
 }
 
-async function createApiProject(projectPath: string, projectName: string) {
+async function collectProjectConfig(
+  projectName: string,
+  template: ProjectTemplate,
+  skipPrompts?: boolean
+): Promise<ProjectConfig | null> {
+  // Database URL
+  const dbUrl = await text({
+    message: "PostgreSQL connection URL:",
+    placeholder: "postgresql://postgres:password@localhost:5432/baasix",
+    defaultValue: "postgresql://postgres:password@localhost:5432/baasix",
+  });
+
+  if (isCancel(dbUrl)) return null;
+
+  // Multi-tenant
+  const multiTenant = await confirm({
+    message: "Enable multi-tenancy?",
+    initialValue: false,
+  });
+
+  if (isCancel(multiTenant)) return null;
+
+  // Public registration
+  const publicRegistration = await confirm({
+    message: "Allow public user registration?",
+    initialValue: true,
+  });
+
+  if (isCancel(publicRegistration)) return null;
+
+  // Real-time / Socket
+  const socketEnabled = await confirm({
+    message: "Enable real-time features (WebSocket)?",
+    initialValue: false,
+  });
+
+  if (isCancel(socketEnabled)) return null;
+
+  // Storage driver
+  const storageDriver = await select({
+    message: "Select storage driver:",
+    options: [
+      { value: "LOCAL", label: "Local Storage", hint: "Store files locally in uploads folder" },
+      { value: "S3", label: "S3 Compatible", hint: "AWS S3, DigitalOcean Spaces, MinIO, etc." },
+    ],
+  });
+
+  if (isCancel(storageDriver)) return null;
+
+  let s3Config: ProjectConfig["s3Config"];
+  if (storageDriver === "S3") {
+    const endpoint = await text({
+      message: "S3 endpoint:",
+      placeholder: "s3.amazonaws.com",
+      defaultValue: "s3.amazonaws.com",
+    });
+    if (isCancel(endpoint)) return null;
+
+    const bucket = await text({
+      message: "S3 bucket name:",
+      placeholder: "my-bucket",
+    });
+    if (isCancel(bucket)) return null;
+
+    const accessKey = await text({
+      message: "S3 Access Key ID:",
+      placeholder: "AKIAIOSFODNN7EXAMPLE",
+    });
+    if (isCancel(accessKey)) return null;
+
+    const secretKey = await text({
+      message: "S3 Secret Access Key:",
+      placeholder: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    });
+    if (isCancel(secretKey)) return null;
+
+    const region = await text({
+      message: "S3 Region:",
+      placeholder: "us-east-1",
+      defaultValue: "us-east-1",
+    });
+    if (isCancel(region)) return null;
+
+    s3Config = {
+      endpoint: endpoint as string,
+      bucket: bucket as string,
+      accessKey: accessKey as string,
+      secretKey: secretKey as string,
+      region: region as string,
+    };
+  }
+
+  // Cache adapter
+  const cacheAdapter = await select({
+    message: "Select cache adapter:",
+    options: [
+      { value: "memory", label: "In-Memory", hint: "Simple, good for development" },
+      { value: "redis", label: "Redis/Valkey", hint: "Recommended for production" },
+    ],
+  });
+
+  if (isCancel(cacheAdapter)) return null;
+
+  let redisUrl: string | undefined;
+  if (cacheAdapter === "redis") {
+    const url = await text({
+      message: "Redis connection URL:",
+      placeholder: "redis://localhost:6379",
+      defaultValue: "redis://localhost:6379",
+    });
+    if (isCancel(url)) return null;
+    redisUrl = url as string;
+  }
+
+  // Auth services
+  const authServices = await multiselect({
+    message: "Select authentication methods:",
+    options: [
+      { value: "LOCAL", label: "Email/Password", hint: "Built-in authentication" },
+      { value: "GOOGLE", label: "Google OAuth" },
+      { value: "FACEBOOK", label: "Facebook OAuth" },
+      { value: "GITHUB", label: "GitHub OAuth" },
+      { value: "APPLE", label: "Apple Sign In" },
+    ],
+    initialValues: ["LOCAL"],
+    required: true,
+  });
+
+  if (isCancel(authServices)) return null;
+
+  // OpenAPI
+  const openApiEnabled = await confirm({
+    message: "Enable OpenAPI documentation (Swagger)?",
+    initialValue: true,
+  });
+
+  if (isCancel(openApiEnabled)) return null;
+
+  // Mail (optional)
+  const mailEnabled = await confirm({
+    message: "Configure email sending?",
+    initialValue: false,
+  });
+
+  if (isCancel(mailEnabled)) return null;
+
+  return {
+    projectName,
+    template,
+    databaseUrl: dbUrl as string,
+    socketEnabled: socketEnabled as boolean,
+    multiTenant: multiTenant as boolean,
+    publicRegistration: publicRegistration as boolean,
+    storageDriver: storageDriver as "LOCAL" | "S3",
+    s3Config,
+    cacheAdapter: cacheAdapter as "memory" | "redis",
+    redisUrl,
+    authServices: authServices as string[],
+    mailEnabled: mailEnabled as boolean,
+    openApiEnabled: openApiEnabled as boolean,
+  };
+}
+
+async function createApiProject(projectPath: string, config: ProjectConfig) {
   const secretKey = generateSecret(64);
-  const cookieSecret = generateSecret(32);
 
   // package.json
   const packageJson = {
-    name: projectName,
+    name: config.projectName,
     version: "0.1.0",
     type: "module",
     scripts: {
@@ -206,60 +404,12 @@ startServer({
 
   await fs.writeFile(path.join(projectPath, "server.js"), serverJs);
 
-  // .env
-  const envContent = `# Database (PostgreSQL 14+ required)
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=baasix
-DB_USER=postgres
-DB_PASSWORD=yourpassword
-
-# Server
-PORT=8056
-NODE_ENV=development
-
-# Security (REQUIRED - auto-generated)
-SECRET_KEY=${secretKey}
-COOKIE_SECRET=${cookieSecret}
-
-# Cache (Redis 6+ recommended for production)
-# CACHE_REDIS_URL=redis://localhost:6379
-
-# Registration
-PUBLIC_REGISTRATION=true
-
-# Uncomment to enable real-time features
-# SOCKET_ENABLED=true
-`;
-
+  // Generate .env file based on config
+  const envContent = generateEnvContent(config, secretKey);
   await fs.writeFile(path.join(projectPath, ".env"), envContent);
 
-  // .env.example
-  const envExample = `# Database (PostgreSQL 14+ required)
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=baasix
-DB_USER=postgres
-DB_PASSWORD=yourpassword
-
-# Server
-PORT=8056
-NODE_ENV=development
-
-# Security (REQUIRED - min 32 chars)
-SECRET_KEY=your-secret-key-min-32-characters-here
-COOKIE_SECRET=your-cookie-secret-min-32-chars
-
-# Cache (Redis 6+ recommended for production)
-# CACHE_REDIS_URL=redis://localhost:6379
-
-# Registration
-PUBLIC_REGISTRATION=true
-
-# Real-time
-# SOCKET_ENABLED=true
-`;
-
+  // .env.example (sanitized version)
+  const envExample = generateEnvExample(config);
   await fs.writeFile(path.join(projectPath, ".env.example"), envExample);
 
   // .gitignore
@@ -268,6 +418,8 @@ PUBLIC_REGISTRATION=true
 uploads/
 logs/
 dist/
+.cache/
+.temp/
 `;
 
   await fs.writeFile(path.join(projectPath, ".gitignore"), gitignore);
@@ -279,26 +431,277 @@ dist/
     "# Place your Baasix extensions here\n"
   );
 
-  // Create uploads directory
-  await fs.mkdir(path.join(projectPath, "uploads"), { recursive: true });
-  await fs.writeFile(path.join(projectPath, "uploads", ".gitkeep"), "");
+  // Create uploads directory (for local storage)
+  if (config.storageDriver === "LOCAL") {
+    await fs.mkdir(path.join(projectPath, "uploads"), { recursive: true });
+    await fs.writeFile(path.join(projectPath, "uploads", ".gitkeep"), "");
+  }
+
+  // Create migrations directory
+  await fs.mkdir(path.join(projectPath, "migrations"), { recursive: true });
+  await fs.writeFile(path.join(projectPath, "migrations", ".gitkeep"), "");
 
   // README.md
-  const readme = `# ${projectName}
+  const readme = generateReadme(config);
+  await fs.writeFile(path.join(projectPath, "README.md"), readme);
+}
+
+function generateEnvContent(config: ProjectConfig, secretKey: string): string {
+  const lines: string[] = [];
+
+  // Server section
+  lines.push("#-----------------------------------");
+  lines.push("# Server");
+  lines.push("#-----------------------------------");
+  lines.push("PORT=8056");
+  lines.push("HOST=localhost");
+  lines.push("NODE_ENV=development");
+  lines.push("DEBUGGING=false");
+  lines.push("");
+
+  // Database section
+  lines.push("#-----------------------------------");
+  lines.push("# Database");
+  lines.push("#-----------------------------------");
+  lines.push(`DATABASE_URL="${config.databaseUrl}"`);
+  lines.push("DATABASE_LOGGING=false");
+  lines.push("DATABASE_POOL_MAX=20");
+  lines.push("DATABASE_POOL_MIN=0");
+  lines.push("");
+
+  // Security section
+  lines.push("#-----------------------------------");
+  lines.push("# Security");
+  lines.push("#-----------------------------------");
+  lines.push(`SECRET_KEY=${secretKey}`);
+  lines.push("ACCESS_TOKEN_EXPIRES_IN=31536000");
+  lines.push("");
+
+  // Multi-tenancy section
+  lines.push("#-----------------------------------");
+  lines.push("# Multi-tenancy");
+  lines.push("#-----------------------------------");
+  lines.push(`MULTI_TENANT=${config.multiTenant}`);
+  lines.push(`PUBLIC_REGISTRATION=${config.publicRegistration}`);
+  if (!config.multiTenant) {
+    lines.push("DEFAULT_ROLE_REGISTERED=user");
+  }
+  lines.push("");
+
+  // Socket section
+  lines.push("#-----------------------------------");
+  lines.push("# Real-time (WebSocket)");
+  lines.push("#-----------------------------------");
+  lines.push(`SOCKET_ENABLED=${config.socketEnabled}`);
+  if (config.socketEnabled) {
+    lines.push('SOCKET_CORS_ENABLED_ORIGINS="http://localhost:3000,http://localhost:8056"');
+    lines.push("SOCKET_PATH=/realtime");
+    if (config.cacheAdapter === "redis" && config.redisUrl) {
+      lines.push("SOCKET_REDIS_ENABLED=true");
+      lines.push(`SOCKET_REDIS_URL=${config.redisUrl}`);
+    }
+  }
+  lines.push("");
+
+  // Cache section
+  lines.push("#-----------------------------------");
+  lines.push("# Cache");
+  lines.push("#-----------------------------------");
+  lines.push("CACHE_ENABLED=true");
+  lines.push(`CACHE_ADAPTER=${config.cacheAdapter}`);
+  lines.push("CACHE_TTL=300");
+  lines.push("CACHE_STRATEGY=explicit");
+  if (config.cacheAdapter === "memory") {
+    lines.push("CACHE_SIZE_GB=1");
+  } else if (config.cacheAdapter === "redis" && config.redisUrl) {
+    lines.push(`CACHE_REDIS_URL=${config.redisUrl}`);
+  }
+  lines.push("");
+
+  // Storage section
+  lines.push("#-----------------------------------");
+  lines.push("# Storage");
+  lines.push("#-----------------------------------");
+  if (config.storageDriver === "LOCAL") {
+    lines.push('STORAGE_SERVICES_ENABLED="LOCAL"');
+    lines.push('STORAGE_DEFAULT_SERVICE="LOCAL"');
+    lines.push("STORAGE_TEMP_PATH=./.temp");
+    lines.push("");
+    lines.push("# Local Storage");
+    lines.push("LOCAL_STORAGE_DRIVER=LOCAL");
+    lines.push('LOCAL_STORAGE_PATH="./uploads"');
+  } else if (config.storageDriver === "S3" && config.s3Config) {
+    lines.push('STORAGE_SERVICES_ENABLED="S3"');
+    lines.push('STORAGE_DEFAULT_SERVICE="S3"');
+    lines.push("STORAGE_TEMP_PATH=./.temp");
+    lines.push("");
+    lines.push("# S3 Compatible Storage");
+    lines.push("S3_STORAGE_DRIVER=S3");
+    lines.push(`S3_STORAGE_ENDPOINT=${config.s3Config.endpoint}`);
+    lines.push(`S3_STORAGE_BUCKET=${config.s3Config.bucket}`);
+    lines.push(`S3_STORAGE_ACCESS_KEY_ID=${config.s3Config.accessKey}`);
+    lines.push(`S3_STORAGE_SECRET_ACCESS_KEY=${config.s3Config.secretKey}`);
+    lines.push(`S3_STORAGE_REGION=${config.s3Config.region}`);
+  }
+  lines.push("");
+
+  // Auth section
+  lines.push("#-----------------------------------");
+  lines.push("# Authentication");
+  lines.push("#-----------------------------------");
+  lines.push(`AUTH_SERVICES_ENABLED=${config.authServices.join(",")}`);
+  lines.push('AUTH_APP_URL="http://localhost:3000,http://localhost:8056"');
+  lines.push("");
+  
+  if (config.authServices.includes("GOOGLE")) {
+    lines.push("# Google OAuth");
+    lines.push("GOOGLE_CLIENT_ID=your_google_client_id");
+    lines.push("GOOGLE_CLIENT_SECRET=your_google_client_secret");
+    lines.push("");
+  }
+  
+  if (config.authServices.includes("FACEBOOK")) {
+    lines.push("# Facebook OAuth");
+    lines.push("FACEBOOK_CLIENT_ID=your_facebook_client_id");
+    lines.push("FACEBOOK_CLIENT_SECRET=your_facebook_client_secret");
+    lines.push("");
+  }
+  
+  if (config.authServices.includes("GITHUB")) {
+    lines.push("# GitHub OAuth");
+    lines.push("GITHUB_CLIENT_ID=your_github_client_id");
+    lines.push("GITHUB_CLIENT_SECRET=your_github_client_secret");
+    lines.push("");
+  }
+  
+  if (config.authServices.includes("APPLE")) {
+    lines.push("# Apple Sign In");
+    lines.push("APPLE_CLIENT_ID=your_apple_client_id");
+    lines.push("APPLE_CLIENT_SECRET=your_apple_client_secret");
+    lines.push("APPLE_TEAM_ID=your_apple_team_id");
+    lines.push("APPLE_KEY_ID=your_apple_key_id");
+    lines.push("");
+  }
+
+  // CORS section
+  lines.push("#-----------------------------------");
+  lines.push("# CORS");
+  lines.push("#-----------------------------------");
+  lines.push('AUTH_CORS_ALLOWED_ORIGINS="http://localhost:3000,http://localhost:8056"');
+  lines.push("AUTH_CORS_ALLOW_ANY_PORT=true");
+  lines.push("AUTH_CORS_CREDENTIALS=true");
+  lines.push("");
+
+  // Cookies section
+  lines.push("#-----------------------------------");
+  lines.push("# Cookies");
+  lines.push("#-----------------------------------");
+  lines.push("AUTH_COOKIE_HTTP_ONLY=true");
+  lines.push("AUTH_COOKIE_SECURE=false");
+  lines.push("AUTH_COOKIE_SAME_SITE=lax");
+  lines.push("AUTH_COOKIE_PATH=/");
+  lines.push("");
+
+  // Mail section
+  if (config.mailEnabled) {
+    lines.push("#-----------------------------------");
+    lines.push("# Mail");
+    lines.push("#-----------------------------------");
+    lines.push('MAIL_SENDERS_ENABLED="SMTP"');
+    lines.push('MAIL_DEFAULT_SENDER="SMTP"');
+    lines.push("SEND_WELCOME_EMAIL=true");
+    lines.push("");
+    lines.push("# SMTP Configuration");
+    lines.push("SMTP_SMTP_HOST=smtp.example.com");
+    lines.push("SMTP_SMTP_PORT=587");
+    lines.push("SMTP_SMTP_SECURE=false");
+    lines.push("SMTP_SMTP_USER=your_smtp_user");
+    lines.push("SMTP_SMTP_PASS=your_smtp_password");
+    lines.push('SMTP_FROM_ADDRESS="Your App" <noreply@example.com>');
+    lines.push("");
+  }
+
+  // OpenAPI section
+  lines.push("#-----------------------------------");
+  lines.push("# OpenAPI Documentation");
+  lines.push("#-----------------------------------");
+  lines.push(`OPENAPI_ENABLED=${config.openApiEnabled}`);
+  if (config.openApiEnabled) {
+    lines.push("OPENAPI_INCLUDE_AUTH=true");
+    lines.push("OPENAPI_INCLUDE_SCHEMA=true");
+    lines.push("OPENAPI_INCLUDE_PERMISSIONS=true");
+  }
+  lines.push("");
+
+  return lines.join("\n");
+}
+
+function generateEnvExample(config: ProjectConfig): string {
+  const lines: string[] = [];
+
+  lines.push("# Database (PostgreSQL 14+ required)");
+  lines.push('DATABASE_URL="postgresql://username:password@localhost:5432/baasix"');
+  lines.push("");
+  lines.push("# Server");
+  lines.push("PORT=8056");
+  lines.push("NODE_ENV=development");
+  lines.push("");
+  lines.push("# Security (REQUIRED - generate unique keys)");
+  lines.push("SECRET_KEY=your-secret-key-minimum-32-characters-long");
+  lines.push("");
+  lines.push("# Features");
+  lines.push(`MULTI_TENANT=${config.multiTenant}`);
+  lines.push(`PUBLIC_REGISTRATION=${config.publicRegistration}`);
+  lines.push(`SOCKET_ENABLED=${config.socketEnabled}`);
+  lines.push("");
+  lines.push("# Storage");
+  lines.push(`STORAGE_DEFAULT_SERVICE="${config.storageDriver}"`);
+  if (config.storageDriver === "LOCAL") {
+    lines.push('LOCAL_STORAGE_PATH="./uploads"');
+  } else {
+    lines.push("S3_STORAGE_ENDPOINT=your-s3-endpoint");
+    lines.push("S3_STORAGE_BUCKET=your-bucket-name");
+    lines.push("S3_STORAGE_ACCESS_KEY_ID=your-access-key");
+    lines.push("S3_STORAGE_SECRET_ACCESS_KEY=your-secret-key");
+  }
+  lines.push("");
+  lines.push("# Cache");
+  lines.push(`CACHE_ADAPTER=${config.cacheAdapter}`);
+  if (config.cacheAdapter === "redis") {
+    lines.push("CACHE_REDIS_URL=redis://localhost:6379");
+  }
+  lines.push("");
+  lines.push("# Auth");
+  lines.push(`AUTH_SERVICES_ENABLED=${config.authServices.join(",")}`);
+  lines.push("");
+
+  return lines.join("\n");
+}
+
+function generateReadme(config: ProjectConfig): string {
+  return `# ${config.projectName}
 
 A Baasix Backend-as-a-Service project.
+
+## Configuration
+
+| Feature | Status |
+|---------|--------|
+| Multi-tenancy | ${config.multiTenant ? "✅ Enabled" : "❌ Disabled"} |
+| Public Registration | ${config.publicRegistration ? "✅ Enabled" : "❌ Disabled"} |
+| Real-time (WebSocket) | ${config.socketEnabled ? "✅ Enabled" : "❌ Disabled"} |
+| Storage | ${config.storageDriver} |
+| Cache | ${config.cacheAdapter} |
+| Auth Methods | ${config.authServices.join(", ")} |
+| OpenAPI Docs | ${config.openApiEnabled ? "✅ Enabled" : "❌ Disabled"} |
 
 ## Getting Started
 
 1. **Configure your database**
 
-   Edit \`.env\` and set your PostgreSQL connection details:
+   Edit \`.env\` and verify your PostgreSQL connection:
    \`\`\`
-   DB_HOST=localhost
-   DB_PORT=5432
-   DB_NAME=baasix
-   DB_USER=postgres
-   DB_PASSWORD=yourpassword
+   DATABASE_URL="postgresql://username:password@localhost:5432/baasix"
    \`\`\`
 
 2. **Start the server**
@@ -310,31 +713,188 @@ A Baasix Backend-as-a-Service project.
 3. **Access the API**
 
    - API: http://localhost:8056
+   - ${config.openApiEnabled ? "Swagger UI: http://localhost:8056/documentation" : "OpenAPI: Disabled"}
    - Default admin: admin@baasix.com / admin@123
+
+## Project Structure
+
+\`\`\`
+${config.projectName}/
+├── .env                 # Environment configuration
+├── .env.example         # Example configuration
+├── package.json
+├── server.js            # Server entry point
+├── extensions/          # Custom hooks and endpoints
+├── migrations/          # Database migrations
+${config.storageDriver === "LOCAL" ? "└── uploads/           # Local file storage" : ""}
+\`\`\`
+
+## Extensions
+
+Place your custom hooks and endpoints in the \`extensions/\` directory:
+
+- **Endpoint extensions**: Add custom API routes
+- **Hook extensions**: Add lifecycle hooks (before/after CRUD)
+
+See [Extensions Documentation](https://baasix.com/docs/extensions) for details.
+
+## Migrations
+
+\`\`\`bash
+# Create a migration
+npx baasix migrate create -n create_products_table
+
+# Run migrations
+npx baasix migrate run
+
+# Check status
+npx baasix migrate status
+\`\`\`
 
 ## Documentation
 
 - [Baasix Documentation](https://baasix.com/docs)
 - [SDK Guide](https://baasix.com/docs/sdk-guide)
 - [API Reference](https://baasix.com/docs/api-reference)
-
-## Extensions
-
-Place your custom hooks and endpoints in the \`extensions/\` directory.
-
-See [Extensions Documentation](https://baasix.com/docs/extensions) for more details.
 `;
-
-  await fs.writeFile(path.join(projectPath, "README.md"), readme);
 }
 
-async function createNextJsProject(projectPath: string, projectName: string, useAppRouter: boolean) {
+function generateNextJsEnvContent(config: ProjectConfig, secretKey: string): string {
+  const lines: string[] = [];
+
+  // Next.js public URL
+  lines.push("#-----------------------------------");
+  lines.push("# Next.js (Client-side)");
+  lines.push("#-----------------------------------");
+  lines.push("NEXT_PUBLIC_BAASIX_URL=http://localhost:8056");
+  lines.push("");
+
+  // Server section
+  lines.push("#-----------------------------------");
+  lines.push("# API Server");
+  lines.push("#-----------------------------------");
+  lines.push("API_PORT=8056");
+  lines.push("NODE_ENV=development");
+  lines.push("DEBUGGING=false");
+  lines.push("");
+
+  // Database section
+  lines.push("#-----------------------------------");
+  lines.push("# Database");
+  lines.push("#-----------------------------------");
+  lines.push(`DATABASE_URL="${config.databaseUrl}"`);
+  lines.push("DATABASE_LOGGING=false");
+  lines.push("DATABASE_POOL_MAX=20");
+  lines.push("");
+
+  // Security section
+  lines.push("#-----------------------------------");
+  lines.push("# Security");
+  lines.push("#-----------------------------------");
+  lines.push(`SECRET_KEY=${secretKey}`);
+  lines.push("ACCESS_TOKEN_EXPIRES_IN=31536000");
+  lines.push("");
+
+  // Multi-tenancy section
+  lines.push("#-----------------------------------");
+  lines.push("# Multi-tenancy");
+  lines.push("#-----------------------------------");
+  lines.push(`MULTI_TENANT=${config.multiTenant}`);
+  lines.push(`PUBLIC_REGISTRATION=${config.publicRegistration}`);
+  lines.push("");
+
+  // Socket section
+  lines.push("#-----------------------------------");
+  lines.push("# Real-time (WebSocket)");
+  lines.push("#-----------------------------------");
+  lines.push(`SOCKET_ENABLED=${config.socketEnabled}`);
+  if (config.socketEnabled) {
+    lines.push('SOCKET_CORS_ENABLED_ORIGINS="http://localhost:3000,http://localhost:8056"');
+    lines.push("SOCKET_PATH=/realtime");
+  }
+  lines.push("");
+
+  // Cache section
+  lines.push("#-----------------------------------");
+  lines.push("# Cache");
+  lines.push("#-----------------------------------");
+  lines.push("CACHE_ENABLED=true");
+  lines.push(`CACHE_ADAPTER=${config.cacheAdapter}`);
+  lines.push("CACHE_TTL=300");
+  if (config.cacheAdapter === "redis" && config.redisUrl) {
+    lines.push(`CACHE_REDIS_URL=${config.redisUrl}`);
+  }
+  lines.push("");
+
+  // Storage section
+  lines.push("#-----------------------------------");
+  lines.push("# Storage");
+  lines.push("#-----------------------------------");
+  if (config.storageDriver === "LOCAL") {
+    lines.push('STORAGE_SERVICES_ENABLED="LOCAL"');
+    lines.push('STORAGE_DEFAULT_SERVICE="LOCAL"');
+    lines.push("STORAGE_TEMP_PATH=./api/.temp");
+    lines.push("LOCAL_STORAGE_DRIVER=LOCAL");
+    lines.push('LOCAL_STORAGE_PATH="./api/uploads"');
+  } else if (config.storageDriver === "S3" && config.s3Config) {
+    lines.push('STORAGE_SERVICES_ENABLED="S3"');
+    lines.push('STORAGE_DEFAULT_SERVICE="S3"');
+    lines.push("STORAGE_TEMP_PATH=./api/.temp");
+    lines.push("S3_STORAGE_DRIVER=S3");
+    lines.push(`S3_STORAGE_ENDPOINT=${config.s3Config.endpoint}`);
+    lines.push(`S3_STORAGE_BUCKET=${config.s3Config.bucket}`);
+    lines.push(`S3_STORAGE_ACCESS_KEY_ID=${config.s3Config.accessKey}`);
+    lines.push(`S3_STORAGE_SECRET_ACCESS_KEY=${config.s3Config.secretKey}`);
+    lines.push(`S3_STORAGE_REGION=${config.s3Config.region}`);
+  }
+  lines.push("");
+
+  // Auth section
+  lines.push("#-----------------------------------");
+  lines.push("# Authentication");
+  lines.push("#-----------------------------------");
+  lines.push(`AUTH_SERVICES_ENABLED=${config.authServices.join(",")}`);
+  lines.push('AUTH_APP_URL="http://localhost:3000,http://localhost:8056"');
+  lines.push("");
+
+  if (config.authServices.includes("GOOGLE")) {
+    lines.push("# Google OAuth");
+    lines.push("GOOGLE_CLIENT_ID=your_google_client_id");
+    lines.push("GOOGLE_CLIENT_SECRET=your_google_client_secret");
+    lines.push("");
+  }
+
+  if (config.authServices.includes("GITHUB")) {
+    lines.push("# GitHub OAuth");
+    lines.push("GITHUB_CLIENT_ID=your_github_client_id");
+    lines.push("GITHUB_CLIENT_SECRET=your_github_client_secret");
+    lines.push("");
+  }
+
+  // CORS section
+  lines.push("#-----------------------------------");
+  lines.push("# CORS");
+  lines.push("#-----------------------------------");
+  lines.push('AUTH_CORS_ALLOWED_ORIGINS="http://localhost:3000,http://localhost:8056"');
+  lines.push("AUTH_CORS_CREDENTIALS=true");
+  lines.push("");
+
+  // OpenAPI section
+  lines.push("#-----------------------------------");
+  lines.push("# OpenAPI Documentation");
+  lines.push("#-----------------------------------");
+  lines.push(`OPENAPI_ENABLED=${config.openApiEnabled}`);
+  lines.push("");
+
+  return lines.join("\n");
+}
+
+async function createNextJsProject(projectPath: string, config: ProjectConfig, useAppRouter: boolean) {
   const secretKey = generateSecret(64);
-  const cookieSecret = generateSecret(32);
 
   // package.json
   const packageJson = {
-    name: projectName,
+    name: config.projectName,
     version: "0.1.0",
     type: "module",
     scripts: {
@@ -348,6 +908,7 @@ async function createNextJsProject(projectPath: string, projectName: string, use
     dependencies: {
       "@tspvivek/baasix": "latest",
       "@tspvivek/baasix-sdk": "latest",
+      "dotenv": "^16.3.1",
       next: "^14.0.0",
       react: "^18.2.0",
       "react-dom": "^18.2.0",
@@ -391,30 +952,19 @@ startServer({
     "# Place your Baasix extensions here\n"
   );
 
-  // .env.local
-  const envLocal = `# Baasix API URL (for SDK)
-NEXT_PUBLIC_BAASIX_URL=http://localhost:8056
+  // Create migrations directory
+  await fs.mkdir(path.join(projectPath, "api", "migrations"), { recursive: true });
+  await fs.writeFile(path.join(projectPath, "api", "migrations", ".gitkeep"), "");
 
-# Database (PostgreSQL 14+ required)
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=baasix
-DB_USER=postgres
-DB_PASSWORD=yourpassword
+  // Create uploads directory for local storage
+  if (config.storageDriver === "LOCAL") {
+    await fs.mkdir(path.join(projectPath, "api", "uploads"), { recursive: true });
+    await fs.writeFile(path.join(projectPath, "api", "uploads", ".gitkeep"), "");
+  }
 
-# API Server
-API_PORT=8056
-NODE_ENV=development
-
-# Security (REQUIRED - auto-generated)
-SECRET_KEY=${secretKey}
-COOKIE_SECRET=${cookieSecret}
-
-# Registration
-PUBLIC_REGISTRATION=true
-`;
-
-  await fs.writeFile(path.join(projectPath, ".env.local"), envLocal);
+  // .env.local - Generate using config with Next.js additions
+  const envContent = generateNextJsEnvContent(config, secretKey);
+  await fs.writeFile(path.join(projectPath, ".env.local"), envContent);
 
   // tsconfig.json
   const tsconfig = {
@@ -839,20 +1389,29 @@ next-env.d.ts
 
   await fs.writeFile(path.join(projectPath, ".gitignore"), gitignore);
 
-  // Create uploads directory
-  await fs.mkdir(path.join(projectPath, "api", "uploads"), { recursive: true });
-  await fs.writeFile(path.join(projectPath, "api", "uploads", ".gitkeep"), "");
-
   // README.md
-  const readme = `# ${projectName}
+  const readme = `# ${config.projectName}
 
 A full-stack project with Next.js and Baasix Backend-as-a-Service.
+
+## Configuration
+
+| Feature | Status |
+|---------|--------|
+| Multi-tenancy | ${config.multiTenant ? "✅ Enabled" : "❌ Disabled"} |
+| Real-time (WebSocket) | ${config.socketEnabled ? "✅ Enabled" : "❌ Disabled"} |
+| Storage | ${config.storageDriver} |
+| Cache | ${config.cacheAdapter} |
+| Auth Methods | ${config.authServices.join(", ")} |
 
 ## Getting Started
 
 1. **Configure your database**
 
-   Edit \`.env.local\` and set your PostgreSQL connection details.
+   Edit \`.env.local\` and verify your PostgreSQL connection:
+   \`\`\`
+   DATABASE_URL="postgresql://username:password@localhost:5432/baasix"
+   \`\`\`
 
 2. **Start the Baasix API** (in one terminal)
 
@@ -870,11 +1429,28 @@ A full-stack project with Next.js and Baasix Backend-as-a-Service.
 
    - Frontend: http://localhost:3000
    - API: http://localhost:8056
+   ${config.openApiEnabled ? "- Swagger UI: http://localhost:8056/documentation" : ""}
 
 ## Default Admin Credentials
 
 - Email: admin@baasix.com
 - Password: admin@123
+
+## Project Structure
+
+\`\`\`
+${config.projectName}/
+├── .env.local           # Environment configuration
+├── package.json
+├── src/
+│   ├── app/             # Next.js pages
+│   └── lib/
+│       └── baasix.ts    # SDK client
+└── api/
+    ├── server.js        # Baasix server
+    ├── extensions/      # Custom hooks and endpoints
+    └── migrations/      # Database migrations
+\`\`\`
 
 ## Documentation
 

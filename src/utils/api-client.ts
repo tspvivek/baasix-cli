@@ -52,13 +52,30 @@ export interface SchemaInfo {
 }
 
 export interface FieldDefinition {
-  type: string;
+  type?: string;
   primaryKey?: boolean;
   allowNull?: boolean;
   unique?: boolean;
   defaultValue?: unknown;
-  values?: Record<string, unknown>;
-  validate?: Record<string, unknown>;
+  values?: Record<string, unknown> | string[]; // Can be object with config or array for enums
+  validate?: {
+    min?: number;
+    max?: number;
+    len?: [number, number];
+    isEmail?: boolean;
+    isUrl?: boolean;
+    isIP?: boolean;
+    isUUID?: number;
+    regex?: string;
+    [key: string]: unknown;
+  };
+  // Relation fields
+  relType?: "BelongsTo" | "HasOne" | "HasMany" | "BelongsToMany";
+  target?: string;
+  foreignKey?: string;
+  as?: string;
+  description?: string;
+  SystemGenerated?: boolean | string;
 }
 
 export async function fetchSchemas(config: BaasixConfig): Promise<SchemaInfo[]> {

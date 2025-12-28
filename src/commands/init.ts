@@ -185,12 +185,14 @@ async function initAction(opts: InitOptions) {
     console.log();
     console.log(chalk.bold("Next steps:"));
     console.log(`  ${chalk.cyan(`cd ${projectName}`)}`);
-    console.log(`  ${chalk.cyan("# Review and update your .env file")}`);
     if (template === "api") {
+      console.log(`  ${chalk.cyan("# Review and update your .env file")}`);
       console.log(`  ${chalk.cyan(`${packageManager} run dev`)}`);
     } else {
-      console.log(`  ${chalk.cyan(`${packageManager} run dev`)} ${chalk.dim("# Start Next.js")}`);
-      console.log(`  ${chalk.cyan(`${packageManager} run api:dev`)} ${chalk.dim("# Start Baasix API (in another terminal)")}`);
+      console.log(`  ${chalk.cyan(`${packageManager} run dev`)} ${chalk.dim("# Start Next.js frontend")}`);
+      console.log();
+      console.log(chalk.dim("  Note: This is a frontend-only project. You need a separate Baasix API."));
+      console.log(chalk.dim(`  To create an API: ${chalk.cyan("npx @tspvivek/baasix-cli init --template api")}`));
     }
     console.log();
 
@@ -206,6 +208,25 @@ async function collectProjectConfig(
   template: ProjectTemplate,
   skipPrompts?: boolean
 ): Promise<ProjectConfig | null> {
+  // If skipPrompts is true, return default configuration
+  if (skipPrompts) {
+    return {
+      projectName,
+      template,
+      databaseUrl: "postgresql://postgres:password@localhost:5432/baasix",
+      socketEnabled: false,
+      multiTenant: false,
+      publicRegistration: true,
+      storageDriver: "LOCAL",
+      s3Config: undefined,
+      cacheAdapter: "memory",
+      redisUrl: undefined,
+      authServices: ["LOCAL"],
+      mailEnabled: false,
+      openApiEnabled: true,
+    };
+  }
+
   // Database URL
   const dbUrl = await text({
     message: "PostgreSQL connection URL:",
@@ -759,156 +780,37 @@ npx baasix migrate status
 `;
 }
 
-function generateNextJsEnvContent(config: ProjectConfig, secretKey: string): string {
+function generateNextJsEnvContent(config: ProjectConfig): string {
   const lines: string[] = [];
 
-  // Next.js public URL
+  // Next.js environment variables (frontend only)
   lines.push("#-----------------------------------");
-  lines.push("# Next.js (Client-side)");
+  lines.push("# Baasix API Connection");
   lines.push("#-----------------------------------");
+  lines.push("# URL of your Baasix API server");
   lines.push("NEXT_PUBLIC_BAASIX_URL=http://localhost:8056");
   lines.push("");
-
-  // Server section
-  lines.push("#-----------------------------------");
-  lines.push("# API Server");
-  lines.push("#-----------------------------------");
-  lines.push("API_PORT=8056");
-  lines.push("NODE_ENV=development");
-  lines.push("DEBUGGING=false");
-  lines.push("");
-
-  // Database section
-  lines.push("#-----------------------------------");
-  lines.push("# Database");
-  lines.push("#-----------------------------------");
-  lines.push(`DATABASE_URL="${config.databaseUrl}"`);
-  lines.push("DATABASE_LOGGING=false");
-  lines.push("DATABASE_POOL_MAX=20");
-  lines.push("");
-
-  // Security section
-  lines.push("#-----------------------------------");
-  lines.push("# Security");
-  lines.push("#-----------------------------------");
-  lines.push(`SECRET_KEY=${secretKey}`);
-  lines.push("ACCESS_TOKEN_EXPIRES_IN=31536000");
-  lines.push("");
-
-  // Multi-tenancy section
-  lines.push("#-----------------------------------");
-  lines.push("# Multi-tenancy");
-  lines.push("#-----------------------------------");
-  lines.push(`MULTI_TENANT=${config.multiTenant}`);
-  lines.push(`PUBLIC_REGISTRATION=${config.publicRegistration}`);
-  lines.push("");
-
-  // Socket section
-  lines.push("#-----------------------------------");
-  lines.push("# Real-time (WebSocket)");
-  lines.push("#-----------------------------------");
-  lines.push(`SOCKET_ENABLED=${config.socketEnabled}`);
-  if (config.socketEnabled) {
-    lines.push('SOCKET_CORS_ENABLED_ORIGINS="http://localhost:3000,http://localhost:8056"');
-    lines.push("SOCKET_PATH=/realtime");
-  }
-  lines.push("");
-
-  // Cache section
-  lines.push("#-----------------------------------");
-  lines.push("# Cache");
-  lines.push("#-----------------------------------");
-  lines.push("CACHE_ENABLED=true");
-  lines.push(`CACHE_ADAPTER=${config.cacheAdapter}`);
-  lines.push("CACHE_TTL=300");
-  if (config.cacheAdapter === "redis" && config.redisUrl) {
-    lines.push(`CACHE_REDIS_URL=${config.redisUrl}`);
-  }
-  lines.push("");
-
-  // Storage section
-  lines.push("#-----------------------------------");
-  lines.push("# Storage");
-  lines.push("#-----------------------------------");
-  if (config.storageDriver === "LOCAL") {
-    lines.push('STORAGE_SERVICES_ENABLED="LOCAL"');
-    lines.push('STORAGE_DEFAULT_SERVICE="LOCAL"');
-    lines.push("STORAGE_TEMP_PATH=./api/.temp");
-    lines.push("LOCAL_STORAGE_DRIVER=LOCAL");
-    lines.push('LOCAL_STORAGE_PATH="./api/uploads"');
-  } else if (config.storageDriver === "S3" && config.s3Config) {
-    lines.push('STORAGE_SERVICES_ENABLED="S3"');
-    lines.push('STORAGE_DEFAULT_SERVICE="S3"');
-    lines.push("STORAGE_TEMP_PATH=./api/.temp");
-    lines.push("S3_STORAGE_DRIVER=S3");
-    lines.push(`S3_STORAGE_ENDPOINT=${config.s3Config.endpoint}`);
-    lines.push(`S3_STORAGE_BUCKET=${config.s3Config.bucket}`);
-    lines.push(`S3_STORAGE_ACCESS_KEY_ID=${config.s3Config.accessKey}`);
-    lines.push(`S3_STORAGE_SECRET_ACCESS_KEY=${config.s3Config.secretKey}`);
-    lines.push(`S3_STORAGE_REGION=${config.s3Config.region}`);
-  }
-  lines.push("");
-
-  // Auth section
-  lines.push("#-----------------------------------");
-  lines.push("# Authentication");
-  lines.push("#-----------------------------------");
-  lines.push(`AUTH_SERVICES_ENABLED=${config.authServices.join(",")}`);
-  lines.push('AUTH_APP_URL="http://localhost:3000,http://localhost:8056"');
-  lines.push("");
-
-  if (config.authServices.includes("GOOGLE")) {
-    lines.push("# Google OAuth");
-    lines.push("GOOGLE_CLIENT_ID=your_google_client_id");
-    lines.push("GOOGLE_CLIENT_SECRET=your_google_client_secret");
-    lines.push("");
-  }
-
-  if (config.authServices.includes("GITHUB")) {
-    lines.push("# GitHub OAuth");
-    lines.push("GITHUB_CLIENT_ID=your_github_client_id");
-    lines.push("GITHUB_CLIENT_SECRET=your_github_client_secret");
-    lines.push("");
-  }
-
-  // CORS section
-  lines.push("#-----------------------------------");
-  lines.push("# CORS");
-  lines.push("#-----------------------------------");
-  lines.push('AUTH_CORS_ALLOWED_ORIGINS="http://localhost:3000,http://localhost:8056"');
-  lines.push("AUTH_CORS_CREDENTIALS=true");
-  lines.push("");
-
-  // OpenAPI section
-  lines.push("#-----------------------------------");
-  lines.push("# OpenAPI Documentation");
-  lines.push("#-----------------------------------");
-  lines.push(`OPENAPI_ENABLED=${config.openApiEnabled}`);
+  lines.push("# Note: Create a separate Baasix API project using:");
+  lines.push("#   npx @tspvivek/baasix-cli init --template api");
   lines.push("");
 
   return lines.join("\n");
 }
 
 async function createNextJsProject(projectPath: string, config: ProjectConfig, useAppRouter: boolean) {
-  const secretKey = generateSecret(64);
-
-  // package.json
+  // package.json - Frontend only, no API dependencies
   const packageJson = {
     name: config.projectName,
     version: "0.1.0",
-    type: "module",
+    private: true,
     scripts: {
       dev: "next dev",
       build: "next build",
       start: "next start",
       lint: "next lint",
-      "api:dev": "node --watch api/server.js",
-      "api:start": "node api/server.js",
     },
     dependencies: {
-      "@tspvivek/baasix": "latest",
       "@tspvivek/baasix-sdk": "latest",
-      "dotenv": "^16.3.1",
       next: "^14.0.0",
       react: "^18.2.0",
       "react-dom": "^18.2.0",
@@ -926,44 +828,8 @@ async function createNextJsProject(projectPath: string, config: ProjectConfig, u
     JSON.stringify(packageJson, null, 2)
   );
 
-  // Create api directory with server.js
-  await fs.mkdir(path.join(projectPath, "api"), { recursive: true });
-
-  const apiServerJs = `import { startServer } from "@tspvivek/baasix";
-
-startServer({
-  port: process.env.API_PORT || 8056,
-  logger: {
-    level: process.env.LOG_LEVEL || "info",
-    pretty: process.env.NODE_ENV !== "production",
-  },
-}).catch((error) => {
-  console.error("Failed to start server:", error);
-  process.exit(1);
-});
-`;
-
-  await fs.writeFile(path.join(projectPath, "api", "server.js"), apiServerJs);
-
-  // Create extensions directory
-  await fs.mkdir(path.join(projectPath, "api", "extensions"), { recursive: true });
-  await fs.writeFile(
-    path.join(projectPath, "api", "extensions", ".gitkeep"),
-    "# Place your Baasix extensions here\n"
-  );
-
-  // Create migrations directory
-  await fs.mkdir(path.join(projectPath, "api", "migrations"), { recursive: true });
-  await fs.writeFile(path.join(projectPath, "api", "migrations", ".gitkeep"), "");
-
-  // Create uploads directory for local storage
-  if (config.storageDriver === "LOCAL") {
-    await fs.mkdir(path.join(projectPath, "api", "uploads"), { recursive: true });
-    await fs.writeFile(path.join(projectPath, "api", "uploads", ".gitkeep"), "");
-  }
-
-  // .env.local - Generate using config with Next.js additions
-  const envContent = generateNextJsEnvContent(config, secretKey);
+  // .env.local - Only frontend environment variables
+  const envContent = generateNextJsEnvContent(config);
   await fs.writeFile(path.join(projectPath, ".env.local"), envContent);
 
   // tsconfig.json
@@ -988,7 +854,7 @@ startServer({
       },
     },
     include: ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-    exclude: ["node_modules", "api"],
+    exclude: ["node_modules"],
   };
 
   await fs.writeFile(
@@ -1032,7 +898,7 @@ export type { User, Role, QueryParams, Filter } from "@tspvivek/baasix-sdk";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "${projectName}",
+  title: "${config.projectName}",
   description: "Built with Baasix",
 };
 
@@ -1091,23 +957,28 @@ import { baasix, type User } from "@/lib/baasix";
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     baasix.auth.getCachedUser().then((u) => {
       setUser(u);
       setLoading(false);
+    }).catch(() => {
+      setLoading(false);
     });
   }, []);
 
   const handleLogin = async () => {
+    setError(null);
     try {
       const { user } = await baasix.auth.login({
         email: "admin@baasix.com",
         password: "admin@123",
       });
       setUser(user);
-    } catch (error) {
-      console.error("Login failed:", error);
+    } catch (err) {
+      setError("Login failed. Make sure your Baasix API server is running.");
+      console.error("Login failed:", err);
     }
   };
 
@@ -1126,10 +997,16 @@ export default function Home() {
 
   return (
     <main style={{ padding: "2rem", maxWidth: "800px", margin: "0 auto" }}>
-      <h1 style={{ marginBottom: "1rem" }}>🚀 ${projectName}</h1>
+      <h1 style={{ marginBottom: "1rem" }}>🚀 ${config.projectName}</h1>
       <p style={{ marginBottom: "2rem", color: "#888" }}>
-        Built with Baasix Backend-as-a-Service
+        Next.js Frontend with Baasix SDK
       </p>
+
+      {error && (
+        <div style={{ padding: "1rem", background: "#3a1a1a", borderRadius: "8px", marginBottom: "1rem", color: "#ff6b6b" }}>
+          {error}
+        </div>
+      )}
 
       {user ? (
         <div>
@@ -1171,11 +1048,22 @@ export default function Home() {
 
       <div style={{ marginTop: "3rem", padding: "1rem", background: "#111", borderRadius: "8px" }}>
         <h2 style={{ marginBottom: "0.5rem", fontSize: "1.2rem" }}>Getting Started</h2>
+        <p style={{ marginBottom: "1rem", color: "#888", fontSize: "0.9rem" }}>
+          This is a frontend-only Next.js app. You need a separate Baasix API server.
+        </p>
         <ol style={{ paddingLeft: "1.5rem", lineHeight: "1.8" }}>
-          <li>Start the API: <code>npm run api:dev</code></li>
-          <li>Start Next.js: <code>npm run dev</code></li>
-          <li>Access the API at <a href="http://localhost:8056">http://localhost:8056</a></li>
+          <li>Create a Baasix API project: <code>npx @tspvivek/baasix-cli init --template api</code></li>
+          <li>Start the API server: <code>cd your-api && npm run dev</code></li>
+          <li>Update <code>.env.local</code> with your API URL if needed</li>
+          <li>Start this Next.js app: <code>npm run dev</code></li>
         </ol>
+      </div>
+
+      <div style={{ marginTop: "1.5rem", padding: "1rem", background: "#111", borderRadius: "8px" }}>
+        <h2 style={{ marginBottom: "0.5rem", fontSize: "1.2rem" }}>API Connection</h2>
+        <p style={{ color: "#888", fontSize: "0.9rem" }}>
+          Currently configured to connect to: <code>{process.env.NEXT_PUBLIC_BAASIX_URL || "http://localhost:8056"}</code>
+        </p>
       </div>
     </main>
   );
@@ -1246,30 +1134,35 @@ a:hover {
 
     await fs.writeFile(path.join(projectPath, "styles", "globals.css"), globalsCss);
 
-    // pages/index.tsx
+    // pages/index.tsx - Frontend only with SDK
     const index = `import { useState, useEffect } from "react";
 import { baasix, type User } from "@/lib/baasix";
 
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     baasix.auth.getCachedUser().then((u) => {
       setUser(u);
       setLoading(false);
+    }).catch(() => {
+      setLoading(false);
     });
   }, []);
 
   const handleLogin = async () => {
+    setError(null);
     try {
       const { user } = await baasix.auth.login({
         email: "admin@baasix.com",
         password: "admin@123",
       });
       setUser(user);
-    } catch (error) {
-      console.error("Login failed:", error);
+    } catch (err) {
+      setError("Login failed. Make sure your Baasix API server is running.");
+      console.error("Login failed:", err);
     }
   };
 
@@ -1288,10 +1181,16 @@ export default function Home() {
 
   return (
     <main style={{ padding: "2rem", maxWidth: "800px", margin: "0 auto" }}>
-      <h1 style={{ marginBottom: "1rem" }}>🚀 ${projectName}</h1>
+      <h1 style={{ marginBottom: "1rem" }}>🚀 ${config.projectName}</h1>
       <p style={{ marginBottom: "2rem", color: "#888" }}>
-        Built with Baasix Backend-as-a-Service
+        Next.js Frontend with Baasix SDK
       </p>
+
+      {error && (
+        <div style={{ padding: "1rem", background: "#3a1a1a", borderRadius: "8px", marginBottom: "1rem", color: "#ff6b6b" }}>
+          {error}
+        </div>
+      )}
 
       {user ? (
         <div>
@@ -1333,11 +1232,22 @@ export default function Home() {
 
       <div style={{ marginTop: "3rem", padding: "1rem", background: "#111", borderRadius: "8px" }}>
         <h2 style={{ marginBottom: "0.5rem", fontSize: "1.2rem" }}>Getting Started</h2>
+        <p style={{ marginBottom: "1rem", color: "#888", fontSize: "0.9rem" }}>
+          This is a frontend-only Next.js app. You need a separate Baasix API server.
+        </p>
         <ol style={{ paddingLeft: "1.5rem", lineHeight: "1.8" }}>
-          <li>Start the API: <code>npm run api:dev</code></li>
-          <li>Start Next.js: <code>npm run dev</code></li>
-          <li>Access the API at <a href="http://localhost:8056">http://localhost:8056</a></li>
+          <li>Create a Baasix API project: <code>npx @tspvivek/baasix-cli init --template api</code></li>
+          <li>Start the API server: <code>cd your-api && npm run dev</code></li>
+          <li>Update <code>.env.local</code> with your API URL if needed</li>
+          <li>Start this Next.js app: <code>npm run dev</code></li>
         </ol>
+      </div>
+
+      <div style={{ marginTop: "1.5rem", padding: "1rem", background: "#111", borderRadius: "8px" }}>
+        <h2 style={{ marginBottom: "0.5rem", fontSize: "1.2rem" }}>API Connection</h2>
+        <p style={{ color: "#888", fontSize: "0.9rem" }}>
+          Currently configured to connect to: <code>{process.env.NEXT_PUBLIC_BAASIX_URL || "http://localhost:8056"}</code>
+        </p>
       </div>
     </main>
   );
@@ -1347,7 +1257,7 @@ export default function Home() {
     await fs.writeFile(path.join(projectPath, "pages", "index.tsx"), index);
   }
 
-  // .gitignore
+  // .gitignore - No api/ folder references since this is frontend-only
   const gitignore = `# Dependencies
 node_modules/
 .pnp
@@ -1368,10 +1278,6 @@ build/
 .env.test.local
 .env.production.local
 
-# Baasix
-api/uploads/
-api/logs/
-
 # Misc
 .DS_Store
 *.pem
@@ -1389,49 +1295,58 @@ next-env.d.ts
 
   await fs.writeFile(path.join(projectPath, ".gitignore"), gitignore);
 
-  // README.md
+  // README.md - Frontend-only documentation
   const readme = `# ${config.projectName}
 
-A full-stack project with Next.js and Baasix Backend-as-a-Service.
+A Next.js frontend project that connects to a Baasix API server using the SDK.
 
-## Configuration
+## Architecture
 
-| Feature | Status |
-|---------|--------|
-| Multi-tenancy | ${config.multiTenant ? "✅ Enabled" : "❌ Disabled"} |
-| Real-time (WebSocket) | ${config.socketEnabled ? "✅ Enabled" : "❌ Disabled"} |
-| Storage | ${config.storageDriver} |
-| Cache | ${config.cacheAdapter} |
-| Auth Methods | ${config.authServices.join(", ")} |
+This is a **frontend-only** project. You need a separate Baasix API server running.
+
+\`\`\`
+┌─────────────────┐     HTTP/WS      ┌─────────────────┐
+│   Next.js App   │ ◄──────────────► │   Baasix API    │
+│   (Frontend)    │   via SDK        │   (Backend)     │
+└─────────────────┘                  └─────────────────┘
+     Port 3000                            Port 8056
+\`\`\`
 
 ## Getting Started
 
-1. **Configure your database**
+### 1. Start your Baasix API Server
 
-   Edit \`.env.local\` and verify your PostgreSQL connection:
-   \`\`\`
-   DATABASE_URL="postgresql://username:password@localhost:5432/baasix"
-   \`\`\`
+If you don't have a Baasix API project yet, create one:
 
-2. **Start the Baasix API** (in one terminal)
+\`\`\`bash
+npx @tspvivek/baasix-cli init --template api my-api
+cd my-api
+npm install
+npm run dev
+\`\`\`
 
-   \`\`\`bash
-   npm run api:dev
-   \`\`\`
+### 2. Configure this Frontend
 
-3. **Start Next.js** (in another terminal)
+Update \`.env.local\` if your API is running on a different URL:
 
-   \`\`\`bash
-   npm run dev
-   \`\`\`
+\`\`\`
+NEXT_PUBLIC_BAASIX_URL=http://localhost:8056
+\`\`\`
 
-4. **Open your browser**
+### 3. Start the Frontend
 
-   - Frontend: http://localhost:3000
-   - API: http://localhost:8056
-   ${config.openApiEnabled ? "- Swagger UI: http://localhost:8056/documentation" : ""}
+\`\`\`bash
+npm install
+npm run dev
+\`\`\`
+
+### 4. Open your browser
+
+- Frontend: http://localhost:3000
 
 ## Default Admin Credentials
+
+Use these credentials to login (configured in your API server):
 
 - Email: admin@baasix.com
 - Password: admin@123
@@ -1440,16 +1355,39 @@ A full-stack project with Next.js and Baasix Backend-as-a-Service.
 
 \`\`\`
 ${config.projectName}/
-├── .env.local           # Environment configuration
+├── .env.local           # API URL configuration
 ├── package.json
-├── src/
-│   ├── app/             # Next.js pages
+${useAppRouter ? `├── src/
+│   ├── app/             # Next.js App Router pages
+│   │   ├── layout.tsx
+│   │   ├── page.tsx
+│   │   └── globals.css
 │   └── lib/
-│       └── baasix.ts    # SDK client
-└── api/
-    ├── server.js        # Baasix server
-    ├── extensions/      # Custom hooks and endpoints
-    └── migrations/      # Database migrations
+│       └── baasix.ts    # SDK client` : `├── pages/              # Next.js Pages Router
+│   ├── _app.tsx
+│   └── index.tsx
+├── lib/
+│   └── baasix.ts       # SDK client
+└── styles/
+    └── globals.css`}
+\`\`\`
+
+## SDK Usage
+
+The SDK is pre-configured in \`${useAppRouter ? 'src/lib/baasix.ts' : 'lib/baasix.ts'}\`:
+
+\`\`\`typescript
+import { baasix } from "${useAppRouter ? '@/lib/baasix' : '@/lib/baasix'}";
+
+// Authentication
+const { user } = await baasix.auth.login({ email, password });
+await baasix.auth.logout();
+
+// CRUD operations
+const items = await baasix.items("posts").list();
+const item = await baasix.items("posts").create({ title: "Hello" });
+await baasix.items("posts").update(id, { title: "Updated" });
+await baasix.items("posts").delete(id);
 \`\`\`
 
 ## Documentation

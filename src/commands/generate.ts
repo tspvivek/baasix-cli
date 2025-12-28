@@ -182,62 +182,116 @@ async function generateAction(opts: GenerateOptions) {
   }
 }
 
-function fieldTypeToTS(field: FieldDefinition): string {
-  const type = field.type;
+function fieldTypeToTS(field: FieldDefinition, allSchemas?: SchemaInfo[]): { type: string; jsdoc?: string } {
+  // Handle relation fields
+  if (field.relType && field.target) {
+    const targetType = toPascalCase(field.target);
+    
+    // Check if it's a system collection (baasix_*)
+    const isSystemCollection = field.target.startsWith("baasix_");
+    
+    // For HasMany and BelongsToMany, return array type
+    if (field.relType === "HasMany" || field.relType === "BelongsToMany") {
+      return { type: `${targetType}[] | null` };
+    }
+    
+    // For BelongsTo and HasOne, return single type
+    return { type: `${targetType} | null` };
+  }
+
+  const type = field.type?.toUpperCase(); // Normalize to uppercase for comparison
 
   // Handle nullable
   const nullable = field.allowNull !== false;
   const nullSuffix = nullable ? " | null" : "";
 
+  // Build JSDoc comment for validations
+  const jsdocParts: string[] = [];
+  
+  if (field.validate) {
+    if (field.validate.min !== undefined) jsdocParts.push(`@min ${field.validate.min}`);
+    if (field.validate.max !== undefined) jsdocParts.push(`@max ${field.validate.max}`);
+    if (field.validate.len) jsdocParts.push(`@length ${field.validate.len[0]}-${field.validate.len[1]}`);
+    if (field.validate.isEmail) jsdocParts.push(`@format email`);
+    if (field.validate.isUrl) jsdocParts.push(`@format url`);
+    if (field.validate.isIP) jsdocParts.push(`@format ip`);
+    if (field.validate.isUUID) jsdocParts.push(`@format uuid`);
+    if (field.validate.regex) jsdocParts.push(`@pattern ${field.validate.regex}`);
+  }
+  
+  // Add length info for strings
+  if (field.values && typeof field.values === 'object' && !Array.isArray(field.values)) {
+    const vals = field.values as Record<string, unknown>;
+    if (vals.length) jsdocParts.push(`@maxLength ${vals.length}`);
+    if (vals.precision && vals.scale) jsdocParts.push(`@precision ${vals.precision},${vals.scale}`);
+  }
+
+  const jsdoc = jsdocParts.length > 0 ? jsdocParts.join(' ') : undefined;
+
   switch (type) {
-    case "String":
-    case "Text":
+    case "STRING":
+    case "TEXT":
     case "UUID":
     case "SUID":
-      return `string${nullSuffix}`;
+      return { type: `string${nullSuffix}`, jsdoc };
 
-    case "Integer":
-    case "BigInt":
-    case "Float":
-    case "Real":
-    case "Double":
-    case "Decimal":
-      return `number${nullSuffix}`;
+    case "INTEGER":
+    case "BIGINT":
+    case "FLOAT":
+    case "REAL":
+    case "DOUBLE":
+    case "DECIMAL":
+      return { type: `number${nullSuffix}`, jsdoc };
 
-    case "Boolean":
-      return `boolean${nullSuffix}`;
+    case "BOOLEAN":
+      return { type: `boolean${nullSuffix}`, jsdoc };
 
-    case "Date":
-    case "DateTime":
-    case "Time":
-      return `string${nullSuffix}`; // ISO date strings
+    case "DATE":
+    case "DATETIME":
+    case "TIME":
+      return { type: `string${nullSuffix}`, jsdoc }; // ISO date strings
 
     case "JSON":
     case "JSONB":
-      return `Record<string, unknown>${nullSuffix}`;
+      return { type: `Record<string, unknown>${nullSuffix}`, jsdoc };
 
-    case "Array":
-      const arrayType = field.values?.type || "unknown";
-      const innerType = arrayType === "String" ? "string" :
-                        arrayType === "Integer" ? "number" :
-                        arrayType === "Boolean" ? "boolean" : "unknown";
-      return `${innerType}[]${nullSuffix}`;
+    case "ARRAY": {
+      const vals = field.values as Record<string, unknown> | undefined;
+      const arrayType = vals?.type as string || "unknown";
+      const innerType = arrayType.toUpperCase() === "STRING" ? "string" :
+                        arrayType.toUpperCase() === "INTEGER" ? "number" :
+                        arrayType.toUpperCase() === "BOOLEAN" ? "boolean" : "unknown";
+      return { type: `${innerType}[]${nullSuffix}`, jsdoc };
+    }
 
-    case "Enum":
-      if (field.values?.values && Array.isArray(field.values.values)) {
-        const enumValues = field.values.values.map((v: string) => `"${v}"`).join(" | ");
-        return `(${enumValues})${nullSuffix}`;
+    case "ENUM": {
+      // Enum values can be directly in field.values as array or in field.values.values
+      let enumValues: string[] | undefined;
+      
+      if (Array.isArray(field.values)) {
+        enumValues = field.values as string[];
+      } else if (field.values && typeof field.values === 'object') {
+        const vals = field.values as Record<string, unknown>;
+        if (Array.isArray(vals.values)) {
+          enumValues = vals.values as string[];
+        }
       }
-      return `string${nullSuffix}`;
+      
+      if (enumValues && enumValues.length > 0) {
+        const enumType = enumValues.map((v: string) => `"${v}"`).join(" | ");
+        return { type: `(${enumType})${nullSuffix}`, jsdoc };
+      }
+      return { type: `string${nullSuffix}`, jsdoc };
+    }
 
-    case "Geometry":
-    case "Point":
-    case "LineString":
-    case "Polygon":
-      return `GeoJSON.Geometry${nullSuffix}`;
+    case "GEOMETRY":
+    case "POINT":
+    case "LINESTRING":
+    case "POLYGON":
+      return { type: `GeoJSON.Geometry${nullSuffix}`, jsdoc };
 
     default:
-      return `unknown${nullSuffix}`;
+      return { type: `unknown${nullSuffix}`, jsdoc };
   }
 }
 
@@ -267,7 +321,49 @@ function generateTypeScriptTypes(schemas: SchemaInfo[]): string {
     "",
   ];
 
-  // Filter out system collections if desired
+  // Collect all referenced system collections
+  const referencedSystemCollections = new Set<string>();
+  for (const schema of schemas) {
+    for (const field of Object.values(schema.schema.fields)) {
+      const fieldDef = field as FieldDefinition;
+      if (fieldDef.relType && fieldDef.target && fieldDef.target.startsWith("baasix_")) {
+        referencedSystemCollections.add(fieldDef.target);
+      }
+    }
+  }
+
+  // Generate types for referenced system collections first
+  const systemSchemas = schemas.filter(
+    (s) => referencedSystemCollections.has(s.collectionName)
+  );
+
+  for (const schema of systemSchemas) {
+    const typeName = toPascalCase(schema.collectionName);
+    const fields = schema.schema.fields;
+
+    lines.push(`/**`);
+    lines.push(` * ${schema.schema.name || schema.collectionName} (system collection)`);
+    lines.push(` */`);
+    lines.push(`export interface ${typeName} {`);
+
+    for (const [fieldName, field] of Object.entries(fields)) {
+      const fieldDef = field as FieldDefinition;
+      // Skip relation fields for system collections to avoid circular refs
+      if (fieldDef.relType) continue;
+      
+      const { type: tsType, jsdoc } = fieldTypeToTS(fieldDef, schemas);
+      const optional = fieldDef.allowNull !== false && !fieldDef.primaryKey ? "?" : "";
+      if (jsdoc) {
+        lines.push(`  /** ${jsdoc} */`);
+      }
+      lines.push(`  ${fieldName}${optional}: ${tsType};`);
+    }
+
+    lines.push(`}`);
+    lines.push("");
+  }
+
+  // Filter out system collections for user schemas
   const userSchemas = schemas.filter(
     (s) => !s.collectionName.startsWith("baasix_")
   );
@@ -282,8 +378,12 @@ function generateTypeScriptTypes(schemas: SchemaInfo[]): string {
     lines.push(`export interface ${typeName} {`);
 
     for (const [fieldName, field] of Object.entries(fields)) {
-      const tsType = fieldTypeToTS(field as FieldDefinition);
-      const optional = (field as FieldDefinition).allowNull !== false && !((field as FieldDefinition).primaryKey) ? "?" : "";
+      const fieldDef = field as FieldDefinition;
+      const { type: tsType, jsdoc } = fieldTypeToTS(fieldDef, schemas);
+      const optional = fieldDef.allowNull !== false && !fieldDef.primaryKey ? "?" : "";
+      if (jsdoc) {
+        lines.push(`  /** ${jsdoc} */`);
+      }
       lines.push(`  ${fieldName}${optional}: ${tsType};`);
     }
 

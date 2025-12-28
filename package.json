@@ -1,6 +1,6 @@
 {
   "name": "baasix",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "CLI for Baasix Backend-as-a-Service",
   "module": "dist/index.mjs",
@@ -10,7 +10,7 @@
     "url": "git+https://github.com/tspvivek/baasix.git",
     "directory": "cli"
   },
-  "homepage": "https://baasix.com/docs/cli",
+  "homepage": "https://baasix.com/docs/cli-guide",
   "scripts": {
     "build": "tsup",
     "start": "node ./dist/index.mjs",

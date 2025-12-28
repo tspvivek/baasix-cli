@@ -192,7 +192,7 @@ async function initAction(opts: InitOptions) {
       console.log(`  ${chalk.cyan(`${packageManager} run dev`)} ${chalk.dim("# Start Next.js frontend")}`);
       console.log();
       console.log(chalk.dim("  Note: This is a frontend-only project. You need a separate Baasix API."));
-      console.log(chalk.dim(`  To create an API: ${chalk.cyan("npx @tspvivek/baasix-cli init --template api")}`));
+      console.log(chalk.dim(`  To create an API: ${chalk.cyan("npx baasix init --template api")}`));
     }
     console.log();
 
@@ -791,7 +791,7 @@ function generateNextJsEnvContent(config: ProjectConfig): string {
   lines.push("NEXT_PUBLIC_BAASIX_URL=http://localhost:8056");
   lines.push("");
   lines.push("# Note: Create a separate Baasix API project using:");
-  lines.push("#   npx @tspvivek/baasix-cli init --template api");
+  lines.push("#   npx baasix init --template api");
   lines.push("");
 
   return lines.join("\n");
@@ -1052,7 +1052,7 @@ export default function Home() {
           This is a frontend-only Next.js app. You need a separate Baasix API server.
         </p>
         <ol style={{ paddingLeft: "1.5rem", lineHeight: "1.8" }}>
-          <li>Create a Baasix API project: <code>npx @tspvivek/baasix-cli init --template api</code></li>
+          <li>Create a Baasix API project: <code>npx baasix init --template api</code></li>
           <li>Start the API server: <code>cd your-api && npm run dev</code></li>
           <li>Update <code>.env.local</code> with your API URL if needed</li>
           <li>Start this Next.js app: <code>npm run dev</code></li>
@@ -1236,7 +1236,7 @@ export default function Home() {
           This is a frontend-only Next.js app. You need a separate Baasix API server.
         </p>
         <ol style={{ paddingLeft: "1.5rem", lineHeight: "1.8" }}>
-          <li>Create a Baasix API project: <code>npx @tspvivek/baasix-cli init --template api</code></li>
+          <li>Create a Baasix API project: <code>npx baasix init --template api</code></li>
           <li>Start the API server: <code>cd your-api && npm run dev</code></li>
           <li>Update <code>.env.local</code> with your API URL if needed</li>
           <li>Start this Next.js app: <code>npm run dev</code></li>
@@ -1319,7 +1319,7 @@ This is a **frontend-only** project. You need a separate Baasix API server runni
 If you don't have a Baasix API project yet, create one:
 
 \`\`\`bash
-npx @tspvivek/baasix-cli init --template api my-api
+npx baasix init --template api my-api
 cd my-api
 npm install
 npm run dev

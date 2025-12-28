@@ -1,4 +1,4 @@
-# @tspvivek/baasix-cli
+# Baasix CLI
 
 Command-line interface for [Baasix](https://baasix.com) Backend-as-a-Service.
 
@@ -6,10 +6,10 @@ Command-line interface for [Baasix](https://baasix.com) Backend-as-a-Service.
 
 ```bash
 # Global installation
-npm install -g @tspvivek/baasix-cli
+npm install -g baasix
 
 # Or use npx
-npx @tspvivek/baasix-cli <command>
+npx baasix <command>
 ```
 
 ## Commands
@@ -48,10 +48,10 @@ baasix init --name my-app --template api -y
 
 ```bash
 # Create API server
-npx @tspvivek/baasix-cli init --template api my-api
+npx baasix init --template api my-api
 
 # Create Next.js frontend (separate from API)
-npx @tspvivek/baasix-cli init --template nextjs-app my-frontend
+npx baasix init --template nextjs-app my-frontend
 ```
 
 ### `baasix generate`
@@ -341,10 +341,10 @@ my-frontend/
 ```yaml
 # .github/workflows/deploy.yml
 - name: Generate Types
-  run: npx @tspvivek/baasix-cli generate --url ${{ secrets.BAASIX_URL }} -o ./src/types/baasix.d.ts -y
+  run: npx baasix generate --url ${{ secrets.BAASIX_URL }} -o ./src/types/baasix.d.ts -y
 
 - name: Run Migrations
-  run: npx @tspvivek/baasix-cli migrate run --url ${{ secrets.BAASIX_URL }} -y
+  run: npx baasix migrate run --url ${{ secrets.BAASIX_URL }} -y
 
 - name: Build
   run: npm run build

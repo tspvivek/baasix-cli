@@ -402,7 +402,7 @@ function generateEnvContent(config, secretKey) {
   lines.push("PORT=8056");
   lines.push("HOST=localhost");
   lines.push("NODE_ENV=development");
-  lines.push("DEBUGGING=false");
+  lines.push("LOG_LEVEL=info");
   lines.push("");
   lines.push("#-----------------------------------");
   lines.push("# Database");
@@ -410,7 +410,6 @@ function generateEnvContent(config, secretKey) {
   lines.push(`DATABASE_URL="${config.databaseUrl}"`);
   lines.push("DATABASE_LOGGING=false");
   lines.push("DATABASE_POOL_MAX=20");
-  lines.push("DATABASE_POOL_MIN=0");
   lines.push("");
   lines.push("#-----------------------------------");
   lines.push("# Security");

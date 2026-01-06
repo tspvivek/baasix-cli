@@ -394,12 +394,15 @@ async function createApiProject(projectPath: string, config: ProjectConfig) {
     version: "0.1.0",
     type: "module",
     scripts: {
-      dev: "node --watch server.js",
-      start: "node server.js",
+      dev: "tsx watch server.js",
+      start: "tsx server.js",
     },
     dependencies: {
       "@tspvivek/baasix": "latest",
       "dotenv": "^16.3.1",
+    },
+    devDependencies: {
+      "tsx": "^4.16.0",
     },
   };
 

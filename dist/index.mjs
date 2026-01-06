@@ -1462,6 +1462,27 @@ async function generateAction(opts) {
     }
   } catch (error) {
     s.stop("Failed to generate types");
+    if (error?.response?.status === 403 || error?.status === 403) {
+      log2.error("Schema access denied (403 Forbidden)");
+      console.log();
+      console.log(chalk2.yellow("Possible causes:"));
+      console.log(chalk2.dim("  1. SCHEMAS_PUBLIC=false is set on the server"));
+      console.log(chalk2.dim("  2. You don't have read permission on baasix_SchemaDefinition"));
+      console.log();
+      console.log(chalk2.yellow("Solutions:"));
+      console.log(chalk2.dim("  \u2022 Set SCHEMAS_PUBLIC=true in server .env (allows all authenticated users)"));
+      console.log(chalk2.dim("  \u2022 Use admin credentials in CLI config (.env or baasix.config.json)"));
+      console.log(chalk2.dim("  \u2022 Grant read permission to your role for baasix_SchemaDefinition collection"));
+      process.exit(1);
+    }
+    if (error?.response?.status === 401 || error?.status === 401) {
+      log2.error("Authentication required (401 Unauthorized)");
+      console.log();
+      console.log(chalk2.yellow("Add credentials to your config:"));
+      console.log(chalk2.dim("  \u2022 Create .env with BAASIX_EMAIL and BAASIX_PASSWORD"));
+      console.log(chalk2.dim("  \u2022 Or use BAASIX_TOKEN for token-based auth"));
+      process.exit(1);
+    }
     if (error instanceof Error) {
       log2.error(error.message);
     } else {

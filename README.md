@@ -1,3 +1,17 @@
+# ⚠️ THIS REPOSITORY HAS MOVED ⚠️
+
+> **This repository is no longer maintained. The project has been moved to a monorepo.**
+>
+> ### 👉 [New Repository: github.com/baasix/baasix](https://github.com/baasix/baasix)
+>
+> The CLI is now part of the Baasix monorepo at `packages/cli`.
+>
+> ```bash
+> npm install -g baasix
+> ```
+
+---
+
 # Baasix CLI
 
 Command-line interface for [Baasix](https://baasix.com) Backend-as-a-Service.
